@@ -1,5 +1,5 @@
 import sys
-sys.path.append('core')
+# sys.path.append('core')
 
 import argparse
 import glob
@@ -7,9 +7,9 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from pathlib import Path
-from .monster import Monster 
+from monster_plusplus.core.monster import Monster 
 
-from utils.utils import InputPadder
+from monster_plusplus.core.utils.utils import InputPadder
 from PIL import Image
 from matplotlib import pyplot as plt
 import os
@@ -22,6 +22,43 @@ import time
 import matplotlib
 import matplotlib.pyplot as plt
 from pathlib import Path
+from view_rerun import Viewer
+
+
+def disparity_to_depth(disp, fx, baseline_mm, 
+                       min_disp=1.0, max_disp=None, 
+                       invalid_value=np.nan):
+    """
+    视差图 → 深度图（安全掩码版，支持 numpy/torch）
+    """
+    # 1. 统一转为 numpy 计算，记录原始类型
+    is_torch = type(disp).__module__ == 'torch'
+    if is_torch:
+        import torch
+        device, dtype = disp.device, disp.dtype
+        disp_np = disp.detach().cpu().numpy()
+    else:
+        disp_np = np.asarray(disp)
+        
+    disp_np = np.squeeze(disp_np).astype(np.float32)
+    
+    # 2. 构建有效视差掩码（替代 np.clip）
+    valid_mask = (disp_np >= min_disp)
+    if max_disp is not None:
+        valid_mask &= (disp_np <= max_disp)
+        
+    # 3. 初始化深度图（无效区域填 invalid_value）
+    depth = np.full_like(disp_np, invalid_value, dtype=np.float32)
+    
+    # 4. 仅对有效区域计算深度，避免除零/篡改
+    depth[valid_mask] = (fx * baseline_mm) / disp_np[valid_mask]
+    
+    # 5. 恢复原始类型（如需 torch 输出）
+    if is_torch:
+        depth = torch.from_numpy(depth).to(device).to(dtype)
+        
+    return depth
+
 
 def gray_2_colormap_np(img, cmap = 'rainbow', max = None):
     img = img.cpu().detach().numpy().squeeze()
@@ -81,6 +118,7 @@ def load_image(imfile):
 
 def demo(args):
     model = torch.nn.DataParallel(Monster(args), device_ids=[0])
+    viewer = Viewer()
 
     assert os.path.exists(args.restore_ckpt)
     checkpoint = torch.load(args.restore_ckpt)
@@ -98,11 +136,11 @@ def demo(args):
     output_directory = Path(args.output_directory)
     output_directory.mkdir(exist_ok=True)
 
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    normalize = NormalizeTensor(mean, std)
+    # mean = [0.485, 0.456, 0.406]
+    # std = [0.229, 0.224, 0.225]
+    # normalize = NormalizeTensor(mean, std)
 
-    videoWrite = cv2.VideoWriter('./monster_demo.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 10, (1241, 752))
+    # videoWrite = cv2.VideoWriter('./monster_demo.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 10, (1241, 752))
 
     with torch.no_grad():
         left_images = sorted(glob.glob(args.left_imgs, recursive=True))[:200]
@@ -124,28 +162,47 @@ def demo(args):
             inference_time = end_time - start_time
             print(f"Inference time: {inference_time:.4f} seconds")
             disp = padder.unpad(disp)
-            file_stem = os.path.join(output_directory, imfile1.split('/')[-1]).replace('.png', '')
+            file_stem = imfile1.split('/')[-2]
+            filename = os.path.join(output_directory, f'{file_stem}.png')
             disp = disp.cpu().numpy().squeeze()
-            disp_np = (2.0*disp).astype(np.uint8)
 
-            disp_np = cv2.applyColorMap(disp_np, cv2.COLORMAP_PLASMA)
-            image_np = np.array(Image.open(imfile1)).astype(np.uint8)       
-            out_img = np.concatenate((image_np, disp_np), 0)
-            videoWrite.write(out_img)
-        videoWrite.release()
-            # np.save(f"{file_stem}.npy", disp_np.squeeze())
+            viewer.view_depth("left_cam_disp", disp)
+
+            # ==================== 使用示例 ====================
+            # 参数设置（人眼立体视觉模拟）
+            fx = 541.65177813              # 焦距 [pixels]，典型手机/小相机值
+            baseline_mm = 60.12      # 人眼瞳距 ≈ 63mm [mm]
+            min_disp = 20.0
+            max_disp = 400.0 
+
+            # 计算深度（单位：mm）
+            depth_mm = disparity_to_depth(
+                disp=disp, 
+                fx=fx, 
+                baseline_mm=baseline_mm,
+                min_disp=min_disp,
+                max_disp=max_disp,
+            )
+            viewer.view_depth("left_cam_depth", depth_mm)
+
+            plt.imsave(filename, disp.squeeze(), cmap='jet')
+            
+            if args.save_numpy:
+                np.save(output_directory / f"{file_stem}.npy", disp.squeeze())
+
+            break
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--restore_ckpt', help="restore checkpoint", default="/data2/cjd/mono_fusion/checkpoints/mix_all.pth")
+    parser.add_argument('--restore_ckpt', help="restore checkpoint", default="./models/Mix_all_large.pth")
 
     parser.add_argument('--save_numpy', action='store_true', help='save output as numpy arrays')
 
-    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="/data/cjd/kitti_odometry/dataset/sequences/00/image_2/*.png")
-    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="/data/cjd/kitti_odometry/dataset/sequences/00/image_3/*.png")
+    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="./demo-imgs/gen*/im0.*")
+    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="./demo-imgs/gen*/im1.*")
 
-    parser.add_argument('--output_directory', help="directory to save output", default="kitti")
+    parser.add_argument('--output_directory', help="directory to save output", default="demo_output")
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
     parser.add_argument('--valid_iters', type=int, default=32, help='number of flow-field updates during forward pass')
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitb', 'vitl', 'vitg'])
