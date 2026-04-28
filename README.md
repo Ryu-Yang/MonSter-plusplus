@@ -49,6 +49,12 @@ The mix_all model is trained on all the datasets we collect over 2M image pairs,
 
 ### 🎬 Dependencies
 
+```bash
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+uv pip install "git+https://github.com/facebookresearch/pytorch3d.git" --no-build-isolation
+uv pip install -e . --no-build-isolation
+```
+
 ```Shell
 pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121
 pip install tqdm

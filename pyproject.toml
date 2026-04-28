@@ -1,0 +1,38 @@
+[build-system]
+requires = ["uv>=0.1.0", "setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "MonSter-plusplus"
+version = "0.0.1"
+description = ""
+readme = "README.md"
+authors = [
+]
+requires-python = ">=3.8,<=3.10"
+dependencies = [
+    "opencv-python",
+    "tqdm",
+    "scipy",
+    
+    "scikit-image",
+    "tensorboard",
+    "matplotlib",
+    "timm==0.6.13",
+    "mmcv==2.2.0",
+    "accelerate==1.0.1",
+    "gradio_imageslider",
+    "gradio==4.29.0",
+    "openexr",
+    "pyexr",
+    "imath",
+    "h5py",
+    "swanlab",
+
+    "rerun-sdk",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["monster_plusplus/*", "rt_monster_plusplus/*"]
+exclude = []
